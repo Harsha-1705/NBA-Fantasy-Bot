@@ -31,10 +31,10 @@ def main():
     # Read raw CSV
     print("Reading raw player game log data...")
     try:
-        df = pd.read_csv('../data/raw/player_gamelog_2023_24.csv')
+        df = pd.read_csv('data/raw/player_gamelog_2023_24.csv')
         print(f"Loaded {len(df)} rows of data")
     except FileNotFoundError:
-        print("Error: ../data/raw/player_gamelog_2024.csv not found")
+        print("Error: ../data/raw/player_gamelog_2023_24.csv not found")
         print("Make sure you've run the get_gamelog.py script first")
         return
     
