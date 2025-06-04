@@ -49,7 +49,7 @@ def main():
     print(f"Min fantasy points: {df['fantasy_points'].min():.2f}")
     
     # Save processed data
-    output_file = '../data/processed/fantasy_points_2023_24.csv'
+    output_file = 'data/processed/fantasy_points_2023_24.csv'
     df.to_csv(output_file, index=False)
     print(f"Processed data saved to {output_file}")
 
