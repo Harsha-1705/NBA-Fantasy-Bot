@@ -32,8 +32,8 @@ def add_days_rest(df):
 
 def main():
     # Load processed fantasy points data
-    input_file = 'data/processed/fantasy_points_2024.csv'
-    output_file = 'data/processed/features_2024.csv'
+    input_file = 'data/processed/fantasy_points_2023_24.csv'
+    output_file = 'data/processed/features_2023_24.csv'
 
     print(f"Loading {input_file} ...")
     df = pd.read_csv(input_file)
