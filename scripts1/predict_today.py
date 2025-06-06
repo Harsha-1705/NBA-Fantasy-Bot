@@ -1,130 +1,182 @@
 #!/usr/bin/env python3
 """
-predict_today.py
-----------------
-Project fantasy points for a given slate (default: *tomorrow*).
-
-How it works
-------------
-1. Read processed history (fantasy_points_<season>.csv)
-2. Trim rows strictly earlier than `--date`
-3. Build feature set for players whose teams play on `--date`
-4. Run trained model -> fantasy-point projection
-5. Save predictions/YYYYMMDD.csv
-
-Run examples
-------------
-python scripts/predict_today.py                    # predicts tomorrow
-python scripts/predict_today.py --date 2024-10-29  # predict on a fixed date
+Daily NBA Fantasy Points Prediction Script
+Loads yesterday's data, applies feature engineering, and generates predictions
+for March 10, 2025 (hardcoded date).
 """
 
-import datetime as dt
-from pathlib import Path
-import sys
-
-import click
-import joblib
 import pandas as pd
-from nba_api.stats.endpoints import ScoreboardV2
-
+import numpy as np
+import pickle
 import os
+from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
 
-# Add project root to sys.path
-current_dir = os.path.dirname(os.path.abspath(__file__))  # scripts1/
-project_root = os.path.abspath(os.path.join(current_dir, '..'))  # Go one level up to root
-sys.path.append(project_root)
+# Hardcoded prediction date
+PREDICTION_DATE = datetime(2025, 3, 10).date()
+PREDICTION_DATE_STR = '20250310'
 
+def load_model():
+    """Load the trained Random Forest model"""
+    model_path = 'model/nba_fantasy_model.pkl'
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"Model file not found: {model_path}")
+    
+    with open(model_path, 'rb') as f:
+        model = pickle.load(f)
+    
+    print(f"✓ Model loaded from {model_path}")
+    return model
 
+def load_recent_data():
+    """Load recent game data for feature engineering"""
+    # Load the latest processed features file
+    features_path = 'data/processed/features_2024.csv'
+    if not os.path.exists(features_path):
+        features_path = 'data/processed/features_2023_24.csv'
+    
+    if not os.path.exists(features_path):
+        raise FileNotFoundError("No features file found in data/processed/")
+    
+    df = pd.read_csv(features_path)
+    print(f"✓ Loaded {len(df)} records from {features_path}")
+    return df
 
-# === import your own featurizer ===
-from src.features.featurizer import make_features  # <- update if your path differs
+def get_latest_player_data(df):
+    """Get the most recent data for each active player"""
+    # Convert dates
+    df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'])
+    df['LAST_GAME_DATE'] = pd.to_datetime(df['LAST_GAME_DATE'])
+    
+    # Get the most recent game for each player (last 30 days to ensure active players)
+    cutoff_date = PREDICTION_DATE - timedelta(days=30)
+    recent_df = df[df['GAME_DATE'] >= cutoff_date]
+    
+    # Get latest record per player
+    latest_data = recent_df.loc[recent_df.groupby('PLAYER_ID')['GAME_DATE'].idxmax()]
+    
+    print(f"✓ Found {len(latest_data)} active players")
+    return latest_data
 
+def engineer_features(df):
+    """Apply the same feature engineering as training"""
+    
+    # Create a copy for predictions
+    pred_df = df.copy()
+    
+    # Use hardcoded prediction date
+    pred_df['PRED_GAME_DATE'] = PREDICTION_DATE
+    
+    # Calculate days rest from last game
+    pred_df['DAYS_REST'] = (pd.to_datetime(PREDICTION_DATE) - pred_df['LAST_GAME_DATE']).dt.days
+    
+    # For prediction, assume alternating home/away (you might want to get actual schedule)
+    np.random.seed(42)  # For reproducible results
+    pred_df['IS_HOME'] = np.random.choice([0, 1], size=len(pred_df))
+    
+    # Extract datetime features from LAST_GAME_DATE
+    pred_df['LAST_GAME_DAYOFWEEK'] = pred_df['LAST_GAME_DATE'].dt.dayofweek
+    pred_df['LAST_GAME_MONTH'] = pred_df['LAST_GAME_DATE'].dt.month
+    
+    # Feature columns (same as training)
+    feature_cols = [
+        'PLAYER_ID', 'fantasy_points_rolling_3', 'fantasy_points_rolling_5', 
+        'fantasy_points_rolling_10', 'MIN_rolling_3', 'MIN_rolling_5', 
+        'MIN_rolling_10', 'IS_HOME', 'DAYS_REST', 'LAST_GAME_DAYOFWEEK', 
+        'LAST_GAME_MONTH'
+    ]
+    
+    # Handle missing columns (adjust column names to match your actual data)
+    available_cols = []
+    for col in feature_cols:
+        if col in pred_df.columns:
+            available_cols.append(col)
+        elif col.upper() in pred_df.columns:
+            pred_df[col] = pred_df[col.upper()]
+            available_cols.append(col)
+    
+    X_pred = pred_df[available_cols]
+    
+    # Fill any missing values
+    X_pred = X_pred.fillna(X_pred.mean())
+    
+    print(f"✓ Feature engineering complete. Shape: {X_pred.shape}")
+    return X_pred, pred_df
 
-# --------------------------------------------------------------------------- #
-# Helpers                                                                     #
-# --------------------------------------------------------------------------- #
-def next_day() -> dt.date:
-    return dt.date.today() + dt.timedelta(days=1)
+def make_predictions(model, X_pred, player_data):
+    """Generate predictions using the trained model"""
+    
+    # Remove PLAYER_ID from features for prediction
+    X_features = X_pred.drop(columns=['PLAYER_ID'])
+    
+    # Make predictions
+    predictions = model.predict(X_features)
+    
+    # Create results DataFrame
+    results = pd.DataFrame({
+        'PLAYER_ID': X_pred['PLAYER_ID'],
+        'PLAYER_NAME': player_data['PLAYER_NAME'],
+        'PRED_FP': predictions
+    })
+    
+    # Sort by predicted fantasy points (descending)
+    results = results.sort_values('PRED_FP', ascending=False)
+    
+    print(f"✓ Generated predictions for {len(results)} players")
+    return results
 
-def schedule_teams(game_date: dt.date) -> set[int]:
-    """Return set of TEAM_IDs that play on `game_date`."""
-    mmddyyyy = game_date.strftime("%m/%d/%Y")
-    print(f"Requesting games for: {mmddyyyy}")  # DEBUG LINE
+def save_predictions(predictions):
+    """Save predictions to CSV file"""
+    # Create predictions directory if it doesn't exist
+    pred_dir = 'predictions'
+    os.makedirs(pred_dir, exist_ok=True)
+    
+    # Use hardcoded date string for filename
+    filename = f"{pred_dir}/{PREDICTION_DATE_STR}.csv"
+    
+    # Save predictions
+    predictions.to_csv(filename, index=False)
+    
+    print(f"✓ Predictions saved to {filename}")
+    print(f"Top 5 predicted performers:")
+    print(predictions.head()[['PLAYER_NAME', 'PRED_FP']].to_string(index=False))
+    
+    return filename
 
-    sb = ScoreboardV2(game_date=mmddyyyy)
-
+def main():
+    """Main prediction pipeline"""
     try:
-        df_list = sb.get_data_frames()
+        print("🏀 Starting NBA Fantasy Predictions...")
+        print(f"Prediction Date: {PREDICTION_DATE} (hardcoded)")
+        print("-" * 50)
+        
+        # Step 1: Load trained model
+        model = load_model()
+        
+        # Step 2: Load recent data
+        df = load_recent_data()
+        
+        # Step 3: Get latest player data
+        latest_data = get_latest_player_data(df)
+        
+        # Step 4: Engineer features
+        X_pred, player_data = engineer_features(latest_data)
+        
+        # Step 5: Make predictions
+        predictions = make_predictions(model, X_pred, player_data)
+        
+        # Step 6: Save results
+        filename = save_predictions(predictions)
+        
+        print("-" * 50)
+        print(f"✅ Prediction pipeline completed successfully!")
+        print(f"📁 Results saved to: {filename}")
+        
     except Exception as e:
-        print(f"Error retrieving scoreboard data: {e}")
-        sys.exit(1)
-
-    if not df_list or df_list[0].empty:
-        click.echo(f"No NBA games found for {game_date}, exiting.")
-        sys.exit(0)
-
-    df = df_list[0]
-    return set(df["HOME_TEAM_ID"]).union(df["VISITOR_TEAM_ID"])
-
-
-def load_history(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path, parse_dates=["GAME_DATE"])
-
-
-# --------------------------------------------------------------------------- #
-# CLI                                                                         #
-# --------------------------------------------------------------------------- #
-@click.command()
-@click.option(
-    "--date",
-    "input_date",
-    type=click.DateTime(formats=["%Y-%m-%d"]),
-    default=None,
-    help="Game date to predict (YYYY-MM-DD). Defaults to tomorrow.",
-)
-@click.option(
-    "--season",
-    default="2024",  # adjust if you switch seasons
-    show_default=True,
-    help="Season label used in processed filename & model filename.",
-)
-def main(input_date, season):
-    game_date: dt.date = (input_date.date() if input_date else next_day())
-
-    # ---------- paths ---------- #
-    proc_file = Path(f"data/processed/fantasy_points_{season}.csv")
-    model_file = Path(f"models/baseline.pkl")
-    out_dir = Path("predictions")
-    out_dir.mkdir(exist_ok=True)
-
-    # ---------- load data ---------- #
-    hist = load_history(proc_file)
-    hist = hist[hist["GAME_DATE"].dt.date < game_date]  # no leakage
-    teams_today = schedule_teams(game_date)
-    latest_rows = (
-        hist[hist["TEAM_ID"].isin(teams_today)]
-        .sort_values("GAME_DATE")
-        .groupby("PLAYER_ID")
-        .tail(1)
-        .reset_index(drop=True)
-    )
-    if latest_rows.empty:
-        click.echo("No players found for that slate—abort.")
-        sys.exit(1)
-
-    # ---------- features & predict ---------- #
-    X_tonight = make_features(latest_rows, hist)
-    model = joblib.load(model_file)
-    latest_rows["PRED_FP"] = model.predict(X_tonight)
-
-    # ---------- save ---------- #
-    ymd = game_date.strftime("%Y%m%d")
-    outfile = out_dir / f"{ymd}.csv"
-    latest_rows[["PLAYER_ID", "PLAYER_NAME", "PRED_FP"]].to_csv(
-        outfile, index=False
-    )
-    click.echo(f"✅  wrote {len(latest_rows)} rows → {outfile}")
-
+        print(f"❌ Error in prediction pipeline: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main()
+
