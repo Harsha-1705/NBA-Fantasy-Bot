@@ -89,7 +89,7 @@ def main(seasons: list[str], top: int | None, sleep_s: float) -> None:
         raise SystemExit(1)
 
     combined = pd.concat(all_frames, ignore_index=True)
-    outfile = out_dir / "player_gamelog_2021_2022.csv"
+    outfile = out_dir / "player_gamelog_2020_2021.csv"
     combined.to_csv(outfile, index=False)
 
     try:
