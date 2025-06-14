@@ -27,6 +27,7 @@ def add_days_rest(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["PLAYER_ID", "GAME_DATE"])
     last = df.groupby("PLAYER_ID")["GAME_DATE"].shift(1)
     df["DAYS_REST"] = (df["GAME_DATE"] - last).dt.days.fillna(0).astype(int)
+    df["LAST_GAME_DATE"] = last.dt.strftime("%Y-%m-%d").fillna("")  # string format for CSV
     return df
 
 def make_features(latest_rows: pd.DataFrame, full_history: pd.DataFrame) -> pd.DataFrame:
@@ -43,9 +44,9 @@ def make_features(latest_rows: pd.DataFrame, full_history: pd.DataFrame) -> pd.D
     feature_cols: List[str] = [c for c in rolls.columns if "rolling" in c] + [
         "IS_HOME",
         "DAYS_REST",
+        "LAST_GAME_DATE",
     ]
 
-    # Merge features back with original latest_rows
     combined = pd.concat([latest_rows.reset_index(drop=True), rolls[feature_cols].reset_index(drop=True)], axis=1)
     return combined
 
