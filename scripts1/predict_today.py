@@ -18,7 +18,8 @@ PREDICTION_DATE_STR = '20240310'
 
 def load_model():
     """Load the trained Random Forest model"""
-    model_path = 'model/nba_fantasy_model.joblib'
+    model_path = '/Users/avantika/NBA-Fantasy-Bot/model/nba_fantasy_xgb_model_with_player.joblib'
+
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     model = load(model_path)
