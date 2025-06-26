@@ -64,7 +64,7 @@ if __name__ == "__main__":
     import click
 
     @click.command()
-    @click.option("--input",  "-i", default="data/processed/fantasy_points_2023-24.csv")
+    @click.option("--input",  "-i", default="data/processed/fantasy_points_2023_24.csv")
     @click.option("--output", "-o", default="data/processed/features_enhanced.csv")
     def cli(input: str, output: str):
         make_features(input, output)
