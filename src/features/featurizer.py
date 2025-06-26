@@ -1,25 +1,33 @@
+# featurizer.py
 from pathlib import Path
 from typing import Iterable, List
 
+import numpy as np
 import pandas as pd
+
 
 def add_rolling_features(
     df: pd.DataFrame,
     col: str,
     windows: Iterable[int] = (3, 5, 10),
 ) -> pd.DataFrame:
-    """Add player-level rolling means for the given column."""
+    """Add player-level rolling means for the given column using only past games."""
     for w in windows:
         df[f"{col}_rolling{w}"] = (
             df.groupby("PLAYER_ID")[col]
-            .transform(lambda x: x.rolling(window=w, min_periods=1).mean())
+            .shift(1)
+            .rolling(window=w, min_periods=1)
+            .mean()
+            .fillna(df[col].mean())
         )
     return df
 
+
 def add_home_away_flag(df: pd.DataFrame) -> pd.DataFrame:
     """Create IS_HOME (1 = home, 0 = away) from MATCHUP column."""
-    df["IS_HOME"] = df["MATCHUP"].str.contains(r"vs\.").astype(int)
+    df["IS_HOME"] = df["MATCHUP"].str.contains(r"vs\.?").astype(int)
     return df
+
 
 def add_days_rest(df: pd.DataFrame) -> pd.DataFrame:
     """Add DAYS_REST based on previous GAME_DATE per player."""
@@ -27,8 +35,9 @@ def add_days_rest(df: pd.DataFrame) -> pd.DataFrame:
     df = df.sort_values(["PLAYER_ID", "GAME_DATE"])
     last = df.groupby("PLAYER_ID")["GAME_DATE"].shift(1)
     df["DAYS_REST"] = (df["GAME_DATE"] - last).dt.days.fillna(0).astype(int)
-    df["LAST_GAME_DATE"] = last.dt.strftime("%Y-%m-%d").fillna("")  # string format for CSV
+    df["LAST_GAME_DATE"] = last  # keep as datetime for downstream modeling
     return df
+
 
 def make_features(latest_rows: pd.DataFrame, full_history: pd.DataFrame) -> pd.DataFrame:
     """Build a feature matrix and combine with original data."""
@@ -47,8 +56,12 @@ def make_features(latest_rows: pd.DataFrame, full_history: pd.DataFrame) -> pd.D
         "LAST_GAME_DATE",
     ]
 
-    combined = pd.concat([latest_rows.reset_index(drop=True), rolls[feature_cols].reset_index(drop=True)], axis=1)
+    combined = pd.concat([
+        latest_rows.reset_index(drop=True),
+        rolls[feature_cols].reset_index(drop=True)
+    ], axis=1)
     return combined
+
 
 def _cli():
     import click
@@ -63,7 +76,7 @@ def _cli():
     @click.option(
         "--output",
         type=str,
-        default="data/processed/features_combined.csv",
+        default="data/processed/features_combined2.csv",
         show_default=True,
     )
     def main(input: str, output: str):
@@ -76,6 +89,6 @@ def _cli():
 
     main()
 
+
 if __name__ == "__main__":
     _cli()
-
