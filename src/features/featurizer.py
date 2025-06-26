@@ -12,10 +12,11 @@ def add_rolling_features(
     windows: Iterable[int] = (3, 5, 10),
 ) -> pd.DataFrame:
     """Add player-level rolling means for the given column using only past games."""
+    # shift so current game is excluded
+    shifted = df.groupby("PLAYER_ID")[col].shift(1)
     for w in windows:
         df[f"{col}_rolling{w}"] = (
-            df.groupby("PLAYER_ID")[col]
-            .shift(1)
+            shifted
             .rolling(window=w, min_periods=1)
             .mean()
             .fillna(df[col].mean())
@@ -33,34 +34,31 @@ def add_days_rest(df: pd.DataFrame) -> pd.DataFrame:
     """Add DAYS_REST based on previous GAME_DATE per player."""
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
     df = df.sort_values(["PLAYER_ID", "GAME_DATE"])
-    last = df.groupby("PLAYER_ID")["GAME_DATE"].shift(1)
-    df["DAYS_REST"] = (df["GAME_DATE"] - last).dt.days.fillna(0).astype(int)
-    df["LAST_GAME_DATE"] = last  # keep as datetime for downstream modeling
+    last_game = df.groupby("PLAYER_ID")["GAME_DATE"].shift(1)
+    df["DAYS_REST"] = (df["GAME_DATE"] - last_game).dt.days.fillna(0).astype(int)
+    # keep last_game for possible feature engineering
+    df["LAST_GAME_DATE"] = last_game
     return df
 
 
-def make_features(latest_rows: pd.DataFrame, full_history: pd.DataFrame) -> pd.DataFrame:
-    """Build a feature matrix and combine with original data."""
-    df = latest_rows.copy()
+def make_features(full_history: pd.DataFrame) -> pd.DataFrame:
+    """Generate feature matrix from full game history data."""
+    df = full_history.copy()
+    # rolling features
+    df = add_rolling_features(df, "fantasy_points")
+    if "MIN" in df.columns:
+        df = add_rolling_features(df, "MIN")
+    # context flags
+    df = add_home_away_flag(df)
+    df = add_days_rest(df)
 
-    rolls = full_history.copy()
-    rolls = add_rolling_features(rolls, "fantasy_points")
-    if "MIN" in rolls.columns:
-        rolls = add_rolling_features(rolls, "MIN")
-    rolls = add_home_away_flag(rolls)
-    rolls = add_days_rest(rolls)
-
-    feature_cols: List[str] = [c for c in rolls.columns if "rolling" in c] + [
-        "IS_HOME",
-        "DAYS_REST",
-        "LAST_GAME_DATE",
+    # select features
+    feature_cols: List[str] = [c for c in df.columns if "rolling" in c] + [
+        "IS_HOME", "DAYS_REST"
     ]
 
-    combined = pd.concat([
-        latest_rows.reset_index(drop=True),
-        rolls[feature_cols].reset_index(drop=True)
-    ], axis=1)
-    return combined
+    # join original identifiers and features
+    return df.loc[:, ["PLAYER_ID", "GAME_DATE", "fantasy_points"] + feature_cols]
 
 
 def _cli():
@@ -70,19 +68,19 @@ def _cli():
     @click.option(
         "--input",
         type=str,
-        default="data/processed/fantasy_points_2023_24.csv",
+        default="data/processed/fantasy_points_2023-24.csv",
         show_default=True,
     )
     @click.option(
         "--output",
         type=str,
-        default="data/processed/features_combined2.csv",
+        default="data/processed/features_new.csv",
         show_default=True,
     )
     def main(input: str, output: str):
         print(f"Loading {input} …")
         hist = pd.read_csv(input)
-        feats = make_features(hist, hist)
+        feats = make_features(hist)
         Path(output).parent.mkdir(parents=True, exist_ok=True)
         feats.to_csv(output, index=False)
         print(f"Saved {output}  (shape={feats.shape})")
