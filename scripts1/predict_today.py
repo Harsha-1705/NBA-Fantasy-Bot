@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Daily NBA Fantasy Points Prediction Script
-ALWAYS uses features_combined.csv in data/processed/.
+Uses data/processed/features_enhanced.csv for prediction.
 """
 
 import pandas as pd
@@ -13,11 +13,10 @@ from joblib import load
 
 warnings.filterwarnings('ignore')
 
-PREDICTION_DATE = datetime(2024, 3, 10).date()  # Change this to today's date as needed
+PREDICTION_DATE = datetime(2024, 3, 10).date()
 PREDICTION_DATE_STR = PREDICTION_DATE.strftime("%Y%m%d")
 
 def load_model():
-    """Load the trained XGBoost model"""
     model_path = 'model/nba_fantasy_xgb_model_with_player.joblib'
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
@@ -26,34 +25,34 @@ def load_model():
     return model
 
 def load_recent_data():
-    """Load and clean the features data"""
-    features_path = 'data/processed/features_combined.csv'
-    if not os.path.exists(features_path):
-        raise FileNotFoundError(f"No features file found at {features_path}")
-    df = pd.read_csv(features_path)
+    path = 'data/processed/features_enhanced.csv'
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Missing file: {path}")
+    df = pd.read_csv(path)
 
+    # Uppercase columns and drop duplicates (fixes Grouper error on PLAYER_ID)
     df.columns = df.columns.str.upper()
     df = df.loc[:, ~df.columns.duplicated()]
-    print(f"✓ Loaded {len(df)} records from {features_path} (columns: {len(df.columns)})")
+
+    print(f"✓ Loaded {len(df)} rows from {path}")
     return df
 
 def get_latest_player_data(df):
-    """Get the most recent game record for each player"""
     df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'])
     df['LAST_GAME_DATE'] = pd.to_datetime(df['LAST_GAME_DATE'], errors='coerce')
 
-    cutoff_date = pd.Timestamp(PREDICTION_DATE) - pd.Timedelta(days=30)
-    recent_df = df[df['GAME_DATE'] >= cutoff_date]
+    cutoff = pd.Timestamp(PREDICTION_DATE) - pd.Timedelta(days=30)
+    recent = df[df['GAME_DATE'] >= cutoff]
+    if recent.empty:
+        raise ValueError(f"No games found between {cutoff.date()} and {PREDICTION_DATE}")
 
-    if recent_df.empty:
-        raise ValueError(f"No games found between {cutoff_date.date()} and {PREDICTION_DATE}")
-
-    latest_data = recent_df.loc[recent_df.groupby('PLAYER_ID')['GAME_DATE'].idxmax()]
-    print(f"✓ Found {len(latest_data)} active players")
-    return latest_data
+    # Group by single PLAYER_ID column
+    idx = recent.groupby('PLAYER_ID')['GAME_DATE'].idxmax()
+    latest = recent.loc[idx].reset_index(drop=True)
+    print(f"✓ Found {len(latest)} active players")
+    return latest
 
 def engineer_features(df):
-    """Prepare features for prediction"""
     pred_df = df.copy()
     pred_df['DAYS_REST'] = (pd.Timestamp(PREDICTION_DATE) - pred_df['LAST_GAME_DATE']).dt.days
     pred_df['LAST_GAME_DAYOFWEEK'] = pred_df['LAST_GAME_DATE'].dt.dayofweek
@@ -62,10 +61,7 @@ def engineer_features(df):
     player_mean = df.groupby('PLAYER_ID')['FANTASY_POINTS'].mean()
     pred_df['PLAYER_MEAN_FP'] = pred_df['PLAYER_ID'].map(player_mean).fillna(df['FANTASY_POINTS'].mean())
 
-    if 'IS_HOME' not in pred_df.columns:
-        np.random.seed(42)
-        pred_df['IS_HOME'] = np.random.choice([0, 1], size=len(pred_df))
-
+    # Define expected feature columns
     feature_cols = [
         'PLAYER_MEAN_FP',
         'FANTASY_POINTS_ROLL3_MEAN', 'FANTASY_POINTS_ROLL5_MEAN', 'FANTASY_POINTS_ROLL10_MEAN',
@@ -76,64 +72,57 @@ def engineer_features(df):
         'MIN_EWM_HL3', 'MIN_EWM_HL5'
     ]
 
-    available_cols = [col for col in feature_cols if col in pred_df.columns]
-    missing_cols = set(feature_cols) - set(available_cols)
-    if missing_cols:
-        print(f"⚠️ Warning: Missing columns in input data: {missing_cols}")
+    # Fill missing expected features with 0
+    missing = [c for c in feature_cols if c not in pred_df.columns]
+    if missing:
+        print(f"⚠️ Adding missing columns: {missing}")
+        for c in missing:
+            pred_df[c] = 0.0
 
-    X_pred = pred_df[available_cols].copy()
-    X_pred = X_pred.fillna(X_pred.mean())
-
-    print(f"✓ Feature engineering complete. Using {len(available_cols)} features.")
+    X_pred = pred_df[feature_cols].fillna(0.0)
+    print(f"✓ Engineered features; using columns: {feature_cols}")
     return X_pred, pred_df
 
 def get_player_name_column(df):
     for col in df.columns:
         if 'NAME' in col:
             return col
-    raise KeyError(f"No player name column found. Existing columns: {df.columns.tolist()}")
+    raise KeyError("No PLAYER_NAME column found!")
 
 def make_predictions(model, X_pred, player_data):
-    predictions = model.predict(X_pred)
+    preds = model.predict(X_pred)
     name_col = get_player_name_column(player_data)
     results = pd.DataFrame({
-        'PLAYER_ID': player_data['PLAYER_ID'].values,
-        'PLAYER_NAME': player_data[name_col].values,
-        'PRED_FP': predictions
-    }).sort_values('PRED_FP', ascending=False)
-
+        'PLAYER_ID': player_data['PLAYER_ID'],
+        'PLAYER_NAME': player_data[name_col],
+        'PRED_FP': preds
+    }).sort_values('PRED_FP', ascending=False).reset_index(drop=True)
     print(f"✓ Generated predictions for {len(results)} players")
     return results
 
-def save_predictions(predictions):
-    pred_dir = 'predictions'
-    os.makedirs(pred_dir, exist_ok=True)
-    filename = f"{pred_dir}/{PREDICTION_DATE_STR}.csv"
-    predictions.to_csv(filename, index=False)
-    print(f"✓ Predictions saved to {filename}")
-    print("Top 5 predicted performers:")
-    print(predictions.head(5)[['PLAYER_NAME', 'PRED_FP']].to_string(index=False))
-    return filename
+def save_predictions(preds):
+    os.makedirs('predictions', exist_ok=True)
+    out_path = f'predictions/{PREDICTION_DATE_STR}.csv'
+    preds.to_csv(out_path, index=False)
+    print(f"✓ Saved predictions to {out_path}")
+    print("Top 5 performers:")
+    print(preds.head(5)[['PLAYER_NAME', 'PRED_FP']].to_string(index=False))
+    return out_path
 
 def main():
+    print("🏀 Starting NBA Fantasy Predictions...")
+    print(f"📅 Prediction Date: {PREDICTION_DATE}")
+    print("-" * 50)
     try:
-        print("🏀 Starting NBA Fantasy Predictions...")
-        print(f"Prediction Date: {PREDICTION_DATE}")
-        print("-" * 50)
-
         model = load_model()
         df = load_recent_data()
-        latest_data = get_latest_player_data(df)
-        X_pred, player_data = engineer_features(latest_data)
+        latest = get_latest_player_data(df)
+        X_pred, player_data = engineer_features(latest)
         predictions = make_predictions(model, X_pred, player_data)
-        filename = save_predictions(predictions)
-
-        print("-" * 50)
+        save_predictions(predictions)
         print("✅ Prediction pipeline completed successfully!")
-        print(f"📁 Results saved to: {filename}")
-
     except Exception as e:
-        print(f"❌ Critical error: {str(e)}")
+        print(f"❌ ERROR: {e}")
         raise
 
 if __name__ == "__main__":
