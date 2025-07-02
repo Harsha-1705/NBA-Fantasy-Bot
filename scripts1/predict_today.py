@@ -13,7 +13,7 @@ from joblib import load
 
 warnings.filterwarnings('ignore')
 
-PREDICTION_DATE = datetime(2024, 3, 10).date()
+PREDICTION_DATE = datetime(2024, 2,12).date()
 PREDICTION_DATE_STR = PREDICTION_DATE.strftime("%Y%m%d")
 
 def load_model():
