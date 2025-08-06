@@ -13,11 +13,11 @@ from joblib import load
 
 warnings.filterwarnings('ignore')
 
-PREDICTION_DATE = datetime(2024, 2,12).date()
+PREDICTION_DATE = datetime(2024, 3,10).date()
 PREDICTION_DATE_STR = PREDICTION_DATE.strftime("%Y%m%d")
 
 def load_model():
-    model_path = 'model/nba_fantasy_xgb_model_with_player.joblib'
+    model_path = 'model/nba_fantasy_histgb_model_with_weights.joblib'
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     model = load(model_path)
@@ -63,14 +63,16 @@ def engineer_features(df):
 
     # Define expected feature columns
     feature_cols = [
-        'PLAYER_MEAN_FP',
-        'FANTASY_POINTS_ROLL3_MEAN', 'FANTASY_POINTS_ROLL5_MEAN', 'FANTASY_POINTS_ROLL10_MEAN',
-        'MIN_ROLL3_MEAN', 'MIN_ROLL5_MEAN', 'MIN_ROLL10_MEAN',
-        'IS_HOME', 'DAYS_REST',
-        'LAST_GAME_DAYOFWEEK', 'LAST_GAME_MONTH',
-        'FANTASY_POINTS_EWM_HL3', 'FANTASY_POINTS_EWM_HL5',
-        'MIN_EWM_HL3', 'MIN_EWM_HL5'
-    ]
+    'PLAYER_MEAN_FP',
+    'FANTASY_POINTS_ROLL3_MEAN', 'FANTASY_POINTS_ROLL3_STD',
+    'FANTASY_POINTS_ROLL5_MEAN', 'FANTASY_POINTS_ROLL5_STD',
+    'FANTASY_POINTS_ROLL10_MEAN', 'FANTASY_POINTS_ROLL10_STD',
+    'FANTASY_POINTS_EWM_HL3', 'FANTASY_POINTS_EWM_HL5',
+    'MIN', 'MIN_ROLL3_MEAN', 'MIN_ROLL3_STD',
+    'MIN_ROLL5_MEAN', 'MIN_ROLL5_STD',
+    'MIN_ROLL10_MEAN', 'MIN_ROLL10_STD',
+    'MIN_EWM_HL3', 'MIN_EWM_HL5'
+]
 
     # Fill missing expected features with 0
     missing = [c for c in feature_cols if c not in pred_df.columns]
