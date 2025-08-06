@@ -17,7 +17,7 @@ PREDICTION_DATE = datetime(2024, 2,12).date()
 PREDICTION_DATE_STR = PREDICTION_DATE.strftime("%Y%m%d")
 
 def load_model():
-    model_path = 'model/nba_fantasy_xgb_model_with_player.joblib'
+    model_path = 'model/nba_fantasy_xgb_model_with_player_weighted.joblib'
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Model file not found: {model_path}")
     model = load(model_path)
